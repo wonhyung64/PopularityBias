@@ -1,13 +1,10 @@
 #%%
 import os
-import wandb
 import torch
-import inspect
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
-from datetime import datetime
 from module.dataset import UserItemTime
 from module.procedure import computeTopNAccuracy
 from module.debias import build_debias_model
@@ -22,23 +19,6 @@ set_seed(args.seed)
 args.device = set_device(args.device)
 args.save_path = f"{args.weights_path}/{args.dataset}"
 os.makedirs(args.save_path, exist_ok=True)
-
-
-wandb_login = False
-file_dir = inspect.getfile(inspect.currentframe())
-file_name = file_dir.split("/")[-1]
-if file_name.endswith(".py"):
-    try:
-        wandb_login = wandb.login(key=open(f"{args.cred_path}/wandb_key.txt", 'r').readline())
-    except Exception:
-        wandb_login = False
-
-
-if wandb_login:
-    expt_num = f'{datetime.now().strftime("%y%m%d_%H%M%S_%f")}'
-    args.expt_name = f"{file_name.split('.')[-2]}_{args.model_name}_{expt_num}"
-    wandb_var = wandb.init(project="ldr_rec", config=vars(args))
-    wandb.run.name = args.expt_name
 
 
 #%%
@@ -69,11 +49,6 @@ epoch = 0
 
 #%%
 model_class = MODEL_REGISTRY["tisasrec"]
-if args.dataset == "ml-1m":
-    time_span = 2048
-else:
-    time_span = 512
-
 debiased_class = build_debias_model(model_class)
 model = debiased_class(
     num_users=dataset.n_user,
@@ -85,7 +60,7 @@ model = debiased_class(
     max_seq_len=args.max_seq_len,
     n_heads=args.n_heads,
     dropout=args.dropout,
-    time_span=time_span
+    time_span=args.time_span
     ).to(args.device)
 
 
@@ -248,11 +223,10 @@ if epoch % args.evaluate_interval == 0:
 
     valid_results = computeTopNAccuracy(gt_list, pred_list, args.topks)
 
-    if wandb_login:
-        wandb_var.log(dict(zip([f"valid_precision_{k}_{epoch}" for k in args.topks], valid_results[0])))
-        wandb_var.log(dict(zip([f"valid_recall_{k}_{epoch}" for k in args.topks], valid_results[1])))
-        wandb_var.log(dict(zip([f"valid_ndcg_{k}_{epoch}" for k in args.topks], valid_results[2])))
-        wandb_var.log(dict(zip([f"valid_mrr_{k}_{epoch}" for k in args.topks], valid_results[3])))
+    print(dict(zip([f"valid_precision_{k}_{epoch}" for k in args.topks], valid_results[0])))
+    print(dict(zip([f"valid_recall_{k}_{epoch}" for k in args.topks], valid_results[1])))
+    print(dict(zip([f"valid_ndcg_{k}_{epoch}" for k in args.topks], valid_results[2])))
+    print(dict(zip([f"valid_mrr_{k}_{epoch}" for k in args.topks], valid_results[3])))
 
 
 pred_list, gt_list = [], []
@@ -294,11 +268,10 @@ for (user, item), pos_time_val in dataset.test_user_item_time.items():
 
 test_results = computeTopNAccuracy(gt_list, pred_list, args.topks)
 
-if wandb_login:
-    wandb_var.log(dict(zip([f"test_precision_{k}_{epoch}" for k in args.topks], test_results[0])))
-    wandb_var.log(dict(zip([f"test_recall_{k}_{epoch}" for k in args.topks], test_results[1])))
-    wandb_var.log(dict(zip([f"test_ndcg_{k}_{epoch}" for k in args.topks], test_results[2])))
-    wandb_var.log(dict(zip([f"test_mrr_{k}_{epoch}" for k in args.topks], test_results[3])))
+print(dict(zip([f"test_precision_{k}_{epoch}" for k in args.topks], test_results[0])))
+print(dict(zip([f"test_recall_{k}_{epoch}" for k in args.topks], test_results[1])))
+print(dict(zip([f"test_ndcg_{k}_{epoch}" for k in args.topks], test_results[2])))
+print(dict(zip([f"test_mrr_{k}_{epoch}" for k in args.topks], test_results[3])))
 
 
 if args.debiased_eval == "true":
@@ -354,12 +327,7 @@ if args.debiased_eval == "true":
 
         test_results = computeTopNAccuracy(gt_list, pred_list, args.topks)
 
-        if wandb_login:
-            wandb_var.log(dict(zip([f"test_{split_name}_precision_{k}_{epoch}" for k in args.topks], test_results[0])))
-            wandb_var.log(dict(zip([f"test_{split_name}_recall_{k}_{epoch}" for k in args.topks], test_results[1])))
-            wandb_var.log(dict(zip([f"test_{split_name}_ndcg_{k}_{epoch}" for k in args.topks], test_results[2])))
-            wandb_var.log(dict(zip([f"test_{split_name}_mrr_{k}_{epoch}" for k in args.topks], test_results[3])))
-
-
-if wandb_login:
-    wandb_var.finish()
+        print(dict(zip([f"test_{split_name}_precision_{k}_{epoch}" for k in args.topks], test_results[0])))
+        print(dict(zip([f"test_{split_name}_recall_{k}_{epoch}" for k in args.topks], test_results[1])))
+        print(dict(zip([f"test_{split_name}_ndcg_{k}_{epoch}" for k in args.topks], test_results[2])))
+        print(dict(zip([f"test_{split_name}_mrr_{k}_{epoch}" for k in args.topks], test_results[3])))

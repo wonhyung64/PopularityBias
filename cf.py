@@ -1,14 +1,10 @@
 #%%
 import os
-import re
-import wandb
 import torch
-import inspect
 import numpy as np
 import torch.nn.functional as F
 from torch import optim
 from pathlib import Path
-from datetime import datetime
 from module.model import build_model
 from module.dataset import UserItemTime
 from module.procedure import computeTopNAccuracy
@@ -21,23 +17,6 @@ set_seed(args.seed)
 args.device = set_device(args.device)
 args.save_path = f"{args.weights_path}/{args.dataset}"
 os.makedirs(args.save_path, exist_ok=True)
-
-
-wandb_login = False
-file_dir = inspect.getfile(inspect.currentframe())
-file_name = file_dir.split("/")[-1]
-if file_name.endswith(".py"):
-    try:
-        wandb_login = wandb.login(key=open(f"{args.cred_path}/wandb_key.txt", 'r').readline())
-    except Exception:
-        wandb_login = False
-
-
-if wandb_login:
-    expt_num = f'{datetime.now().strftime("%y%m%d_%H%M%S_%f")}'
-    args.expt_name = f"{file_name.split('.')[-2]}_{args.model_name}_{expt_num}"
-    wandb_var = wandb.init(project="ldr_rec", config=vars(args))
-    wandb.run.name = args.expt_name
 
 
 #%%
@@ -158,14 +137,10 @@ while epoch < args.epochs:
 
         valid_results = computeTopNAccuracy(gt_list, pred_list, args.topks)
 
-        if wandb_login:
-            wandb_var.log({
-                "train_ldr": epoch_user_loss / batch_num,
-            })
-            wandb_var.log(dict(zip([f"valid_precision_{k}" for k in args.topks], valid_results[0])))
-            wandb_var.log(dict(zip([f"valid_recall_{k}" for k in args.topks], valid_results[1])))
-            wandb_var.log(dict(zip([f"valid_ndcg_{k}" for k in args.topks], valid_results[2])))
-            wandb_var.log(dict(zip([f"valid_mrr_{k}" for k in args.topks], valid_results[3])))
+        print(dict(zip([f"valid_precision_{k}" for k in args.topks], valid_results[0])))
+        print(dict(zip([f"valid_recall_{k}" for k in args.topks], valid_results[1])))
+        print(dict(zip([f"valid_ndcg_{k}" for k in args.topks], valid_results[2])))
+        print(dict(zip([f"valid_mrr_{k}" for k in args.topks], valid_results[3])))
 
 
 pred_list, gt_list = [], []
@@ -188,9 +163,7 @@ for (user, item), pos_time_val in dataset.test_user_item_time.items():
 
 test_results = computeTopNAccuracy(gt_list, pred_list, args.topks)
 
-if wandb_login:
-    wandb_var.log(dict(zip([f"test_precision_{k}" for k in args.topks], test_results[0])))
-    wandb_var.log(dict(zip([f"test_recall_{k}" for k in args.topks], test_results[1])))
-    wandb_var.log(dict(zip([f"test_ndcg_{k}" for k in args.topks], test_results[2])))
-    wandb_var.log(dict(zip([f"test_mrr_{k}" for k in args.topks], test_results[3])))
-    wandb_var.finish()
+print(dict(zip([f"test_precision_{k}" for k in args.topks], test_results[0])))
+print(dict(zip([f"test_recall_{k}" for k in args.topks], test_results[1])))
+print(dict(zip([f"test_ndcg_{k}" for k in args.topks], test_results[2])))
+print(dict(zip([f"test_mrr_{k}" for k in args.topks], test_results[3])))
