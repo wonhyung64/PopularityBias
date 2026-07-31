@@ -5,6 +5,8 @@ from .base import ResidualBase
 
 
 class TiSASRec(ResidualBase):
+    # time-interval aware self-attention (Li, Wang & McAuley, 2020): augments SASRec with
+    # relative time-interval embeddings alongside absolute position embeddings
     def __init__(self, *args, time_span=256, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -47,7 +49,7 @@ class TiSASRec(ResidualBase):
             )
 
     def _build_position_ids(self, hist_item_idx):
-        # [B, L]
+        # [B, L], padded positions get id 0
         B, L = hist_item_idx.shape
         pos = torch.arange(1, L + 1, device=hist_item_idx.device).unsqueeze(0).expand(B, -1)
         valid = hist_item_idx.ne(self.padding_item_id)
@@ -76,8 +78,8 @@ class TiSASRec(ResidualBase):
 
     def _get_last_hidden(self, seqs, hist_item_idx):
         """
-        마지막 non-padding 위치의 hidden state를 가져온다.
-        left-padding / right-padding 둘 다 안전하게 동작.
+        Pick the hidden state at the last non-padding position of each sequence.
+        Works for either left- or right-padded histories.
         seqs: [B, L, D]
         """
         B, L, D = seqs.shape
@@ -120,7 +122,7 @@ class TiSASRec(ResidualBase):
         time_mat = self._build_time_matrix(hist_timestamps, hist_item_idx)  # [B, L, L]
 
         abs_pos_k = self.abs_pos_k_emb(pos_ids)     # [B, L, D]
-        
+
         abs_pos_v = self.abs_pos_v_emb(pos_ids)     # [B, L, D]
         time_mat_k = self.time_matrix_k_emb(time_mat)  # [B, L, L, D]
         time_mat_v = self.time_matrix_v_emb(time_mat)  # [B, L, L, D]
@@ -249,24 +251,24 @@ class TimeAwareMultiHeadSelfAttention(nn.Module):
         time_mat_k = self._split_heads_2d(time_mat_k)  # [BH, L, L, Dh]
         time_mat_v = self._split_heads_2d(time_mat_v)  # [BH, L, L, Dh]
 
-        # [BH, L, L]
+        # attention score = content term + absolute-position term + relative-time-interval term
         attn_scores = torch.matmul(q, k.transpose(1, 2))
         attn_scores = attn_scores + torch.matmul(q, abs_pos_k.transpose(1, 2))
         attn_scores = attn_scores + torch.einsum("bid,bijd->bij", q, time_mat_k)
         attn_scores = attn_scores / math.sqrt(self.head_dim)
 
-        # key padding mask only
+        # mask out padded keys
         key_pad = padding_mask.repeat_interleave(self.n_heads, dim=0)  # [BH, L]
         attn_scores = attn_scores.masked_fill(key_pad.unsqueeze(1), float("-inf"))
 
-        # padded query rows -> softmax NaN 방지
+        # zero out padded query rows before softmax to avoid NaNs from all -inf rows
         query_pad = padding_mask.repeat_interleave(self.n_heads, dim=0)  # [BH, L]
         attn_scores = attn_scores.masked_fill(query_pad.unsqueeze(-1), 0.0)
 
         attn_weights = torch.softmax(attn_scores, dim=-1)
         attn_weights = self.attn_dropout(attn_weights)
 
-        # padded query rows는 output 0으로
+        # padded query rows produce zero output
         attn_weights = attn_weights.masked_fill(query_pad.unsqueeze(-1), 0.0)
 
         out = torch.matmul(attn_weights, v)

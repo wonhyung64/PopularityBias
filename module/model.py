@@ -6,6 +6,7 @@ from .fearec import FEARec
 from .bsarec import BSARec
 
 
+# every backbone used in the experiments, all sharing the ResidualBase interface
 MODEL_REGISTRY = {
     "mf": MF,
     "grurec": GRURec,
@@ -40,4 +41,3 @@ def score_pair(model, item_idx, hist_item_idx, additional_feat):
 
 def score_all(model, hist_item_idx, additional_feat):
     return model.score_all_items(hist_item_idx, additional_feat)
-

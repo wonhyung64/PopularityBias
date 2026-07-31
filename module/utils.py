@@ -38,6 +38,8 @@ def parse_args():
     parser.add_argument('--alpha', type=float, default=0.5)
     parser.add_argument('--c', type=int, default=3)
 
+    # tau: contrastive temperature, eta: inference-time popularity calibration weight,
+    # gamma: loss trade-off between the density-ratio and Hawkes popularity objectives
     parser.add_argument('--tau', type=float, default=0.5)
     parser.add_argument('--eta', type=float, default=0.5)
     parser.add_argument('--gamma', type=float,default=0.5,)
@@ -46,6 +48,7 @@ def parse_args():
     try:
         return parser.parse_args()
     except:
+        # falls back to defaults when run interactively (e.g. notebook/REPL) with no CLI args
         return parser.parse_args([])
 
 
@@ -63,12 +66,13 @@ def set_device(device="none"):
     if device == "none":
         if torch.cuda.is_available():
             device = "cuda"
-        else: 
+        else:
             device = "cpu"
 
     return device
 
 
 def get_epoch(path):
+    # extract the epoch number from a checkpoint filename like "..._e120_seed0.pt"
     match = re.search(r"_e(\d+)_", path.name)
     return int(match.group(1)) if match else -1

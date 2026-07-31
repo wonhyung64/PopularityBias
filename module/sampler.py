@@ -11,8 +11,15 @@ def sample_epoch_negatives(
     num_negatives,
 ):
     """
-    Pre-sample negatives once per epoch from the frozen prior snapshot.
-    The sampler uses the exact base/excitation mixture decomposition.
+    Pre-sample negatives for every training event from a frozen Hawkes snapshot,
+    following pi(v|t) = lambda_v(t) / sum_k lambda_k(t) with lambda_v(t) = mu_v + alpha_v * excitation_v(t).
+
+    Instead of recomputing the full intensity at every event, the mixture is sampled by first
+    choosing base (prob ~ mu mass) vs excitation (prob ~ decayed alpha mass) and then sampling an
+    item from whichever branch was picked. The excitation branch decays with a single running
+    factor g = exp(-beta * elapsed_time), so past contributions can be rescaled in O(1) instead of
+    being recomputed per item, and per-item excitation weights are tracked in a Fenwick tree for
+    O(log num_items) weighted sampling.
     """
     negatives = np.empty((len(train_events), num_negatives), dtype=np.int64)
     tree = FenwickTree(num_items)
@@ -22,6 +29,7 @@ def sample_epoch_negatives(
     prev_time = float(train_events[0][2]) if train_events else 0.0
 
     def sample_one_excluding(pos_item: int, rho: float) -> int:
+        # rejection sampling: redraw if the sampled negative happens to be the positive item
         for _ in range(20):
             if np.random.rand() < rho or total_c <= 0.0:
                 candidate = snapshot.base_sampler.sample()
@@ -30,7 +38,7 @@ def sample_epoch_negatives(
                 candidate = tree.sample(mass)
             if candidate != pos_item:
                 return int(candidate)
-        # Fallback: uniform rejection if the prior mass is too concentrated.
+        # prior mass too concentrated on pos_item after 20 tries, fall back to plain uniform
         candidate = np.random.randint(0, num_items - 1)
         candidate += candidate >= pos_item
         return int(candidate)
@@ -46,6 +54,8 @@ def sample_epoch_negatives(
         for j in range(num_negatives):
             negatives[idx, j] = sample_one_excluding(item, rho)
 
+        # record this event's excitation contribution, stored pre-divided by g so it can be
+        # rescaled later just by multiplying by whatever g is at that future time
         delta_c = snapshot.alpha[item] / max(g, 1e-12)
         c_weights[item] += delta_c
         total_c += delta_c
@@ -56,7 +66,7 @@ def sample_epoch_negatives(
 
 
 class FenwickTree:
-    """Fenwick tree for positive weights, used by the excitation sampler."""
+    """Fenwick (binary indexed) tree over item weights, used for weighted sampling of the excitation term."""
 
     def __init__(self, size: int) -> None:
         self.size = int(size)
@@ -80,6 +90,7 @@ class FenwickTree:
         return s
 
     def sample(self, mass: float) -> int:
+        # binary search over the tree for the smallest index whose prefix sum reaches `mass`
         if mass < 0.0 or mass >= self.total() + 1e-9:
             raise ValueError("mass must be in [0, total)")
         idx = 0
@@ -96,6 +107,7 @@ class FenwickTree:
 
 @torch.no_grad()
 def make_prior_snapshot(model):
+    # freeze the current mu/alpha/beta estimates into a lightweight numpy snapshot for sampling
     model.eval()
     mu_t, alpha_t, beta_t = model.prior_parameters_from_embeddings()
     mu = mu_t.detach().cpu().numpy().astype(np.float64)
@@ -112,7 +124,7 @@ def make_prior_snapshot(model):
 
 
 class BaseSampler:
-    """CDF sampler for the frozen base distribution p_base(v) ∝ mu_v."""
+    """CDF sampler for the frozen base distribution p_base(v) ~ mu_v."""
 
     def __init__(self, weights: np.ndarray) -> None:
         weights = np.asarray(weights, dtype=np.float64)

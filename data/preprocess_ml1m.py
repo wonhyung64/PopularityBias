@@ -10,6 +10,7 @@ df = pd.read_csv(f"{file_dir}/ml-1m/ratings.dat", sep="::", header=None)
 df.columns = ["user_id", "item_id", "rating", "timestamp"]
 
 
+# switch to 0-indexed ids if the raw file starts at 1
 if df["user_id"].min() == 1:
     df["user_id"] = df["user_id"] - 1
 if df["item_id"].min() == 1:
@@ -17,8 +18,10 @@ if df["item_id"].min() == 1:
 
 
 #%%
+# keep only ratings >= 4 as implicit-feedback positives
 df = df.loc[df["rating"] >= 4, ["user_id", "item_id", "timestamp"]].reset_index(drop=True)
 
+# remap item ids to a contiguous range after filtering
 unique_items = sorted(df["item_id"].unique())
 item2newid = {old_id: new_id for new_id, old_id in enumerate(unique_items)}
 newid2item = {new_id: old_id for old_id, new_id in item2newid.items()}
@@ -27,6 +30,7 @@ df["item_id"] = df["item_id"].map(item2newid)
 
 
 #%%
+# chronological 8:1:1 train/valid/test split by global timestamp quantiles
 train_time_upper = df["timestamp"].quantile(0.8)
 valid_time_upper = df["timestamp"].quantile(0.9)
 train_idx = df[df["timestamp"] <= train_time_upper].index
@@ -50,6 +54,7 @@ for u in df["user_id"].unique().tolist():
     _time_dict[u] = dict(zip(u_df["item_id"], u_df["timestamp"]))
 
 #%%
+# drop users with fewer than 5 training interactions and reindex the remaining users
 train_dict, valid_dict, test_dict, time_dict = {}, {}, {}, {}
 train_user_list = list(_train_dict.keys())
 train_user_list.sort()
@@ -75,6 +80,7 @@ np.save(f"{file_dir}/ml-1m/validation_dict.npy", valid_dict, allow_pickle=True)
 np.save(f"{file_dir}/ml-1m/interaction_time_dict.npy", time_dict, allow_pickle=True)
 
 # %%
+# sanity-check counts after filtering
 user_set, item_set = [], []
 train_num, valid_num, test_num = 0, 0, 0
 

@@ -1,4 +1,6 @@
 #%%
+# Proposed framework specialized for TiSASRec, mirroring debiased_seq_rec.py but passing
+# discretized history timestamps into encode_user/score_pair/score_all instead of a user id.
 import os
 import torch
 import numpy as np
@@ -109,8 +111,9 @@ while epoch < args.epochs:
         hot_anchor_user = torch.tensor(dataset.hot_user_list[hot_sample_idx], dtype=torch.long, device=args.device)
         hot_pos_item = torch.tensor(dataset.hot_pos_item_list[hot_sample_idx], dtype=torch.long, device=args.device)
         anchor_hist_items = torch.tensor(dataset.train_hist_item_list[hot_sample_idx], dtype=torch.long, device=args.device)
+        # history times are stored in days; TiSASRec's relative-interval embedding expects seconds
         anchor_hist_times = torch.tensor(dataset.train_hist_time_list[hot_sample_idx] * 24 * 60 * 60, dtype=torch.long, device=args.device)
-        
+
         hot_neg_item = torch.tensor(hot_negs[hot_sample_idx], dtype=torch.long, device=args.device)
         pos_score = score_pair(model, hot_pos_item, anchor_hist_items, anchor_hist_times)
         neg_score = score_pair(model, hot_neg_item, anchor_hist_items, anchor_hist_times)

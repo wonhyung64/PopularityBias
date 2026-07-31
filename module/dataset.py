@@ -4,6 +4,8 @@ from torch.utils.data import Dataset
 
 
 class UserItemTime(Dataset):
+    # loads the chronologically-split interaction dicts and derives everything the
+    # training loop needs: hot/cold splits, per-item event-time arrays, and history sequences
     def __init__(self, data_path, dataset, time_unit, time_len, seq_len):
         path = f"{data_path}/{dataset}"
         self.time_unit = time_unit
@@ -43,6 +45,7 @@ class UserItemTime(Dataset):
 
 
     def load_set(self, set_dict):
+        # flatten a {user: [items]} dict into parallel (user, item) arrays
         UniqueUsers, Item, User = [], [], []
         dataSize = 0
         for uid in set_dict.keys():
@@ -68,7 +71,7 @@ class UserItemTime(Dataset):
         user_item_time = {}
         for user in set_dict:
             for item in set_dict[user]:
-                time = time_dict[user][item] 
+                time = time_dict[user][item]
                 if time_unit == "s":
                     pass
                 elif time_unit == "m":
@@ -107,6 +110,7 @@ class UserItemTime(Dataset):
                     item_time_dict[item_idx] = []
                 item_time_dict[item_idx].append(times)
 
+        # sort each item's event times and pad to a common length, right-aligned
         item_time_array = []
         max_time = 0.
         max_time_len = 0
@@ -123,10 +127,11 @@ class UserItemTime(Dataset):
         if time_len == 0:
             time_len = max_time_len
 
+        # keep only the most recent `time_len` events per item, pad short histories with max_time
         for i in range(max(item_time_dict.keys())+1):
             time_array = item_time_array[i]
             item_time_array[i] = np.pad(time_array[-time_len:], (0, time_len - len(time_array[-time_len:])), "constant", constant_values=max_time)
-            
+
         item_time_array = np.stack(item_time_array, 0)
 
         return item_time_array
@@ -156,6 +161,9 @@ class UserItemTime(Dataset):
 
 
     def split_train_hot_n_cold(self):
+        # "cold" events are a user's first interaction (or ties at the same timestamp as the
+        # previous one), for which no earlier history exists; "hot" events have real history
+        # and are what the density-ratio loss and negative sampler are built from
         self.train_events = []
         for (u,v), t in self.train_user_item_time.items():
                 self.train_events.append((u, v, float(t)))
@@ -168,13 +176,13 @@ class UserItemTime(Dataset):
             if (u != u_start):
                 self.train_cold_events.append((u, v, float(t)))
                 u_start = u
-                t_start = t 
+                t_start = t
             elif (u == u_start) & (t == t_start):
                 self.train_cold_events.append((u, v, float(t)))
-                t_start = t 
+                t_start = t
             elif (u == u_start) & (t != t_start):
                 self.train_hot_events.append((u, v, float(t)))
-                t_start = t 
+                t_start = t
             else:
                 raise ValueError("Invalid Sample")
 
@@ -194,6 +202,7 @@ class UserItemTime(Dataset):
 
 
     def build_histories(self, events, seq_len):
+        # for each event, gather the user's prior interactions (strictly before t), left-padded to seq_len
         hist_item_list, hist_time_list = [], []
         for (u, v, t) in events:
             hist = [(tt, vv) for (tt, vv) in self.user_interactions[u] if tt < t]
@@ -211,6 +220,7 @@ class UserItemTime(Dataset):
 
 
     def get_pair_user_uniform(self, k=1):
+        # uniform negative users, sampled by rejection so the positive user is never picked
         pos_user = self.hot_user_list.astype(np.int64)
         N = len(pos_user)
         neg_user = np.random.randint(0, self.n_user - 1, size=(N, k), dtype=np.int64)
@@ -219,6 +229,8 @@ class UserItemTime(Dataset):
         self.neg_user_list = neg_user
 
     def get_pair_item_uniform(self, k=1, w_time=False):
+        # uniform negative items for hot and cold events, used both as the uniform-sampling
+        # baseline and for the Hawkes popularity loss's negative set
         hot_pos_item = self.hot_item_list.astype(np.int64)
         hot_N = len(hot_pos_item)
         hot_neg_item = np.random.randint(0, self.m_item - 1, size=(hot_N, k), dtype=np.int64)
@@ -233,17 +245,22 @@ class UserItemTime(Dataset):
         self.cold_pos_item_list = cold_pos_item
         self.cold_neg_item_list = cold_neg_item
         if w_time:
+            # event-time histories for the sampled pos/neg items, needed by model.prior() to
+            # evaluate the Hawkes intensity at each interaction time
             self.hot_pos_time_all = self.item_time_array[hot_pos_item]
             self.hot_neg_time_all = self.item_time_array[hot_neg_item]
             self.cold_pos_time_all = self.item_time_array[cold_pos_item]
             self.cold_neg_time_all = self.item_time_array[cold_neg_item]
-        
+
 
 
     def prepare_user_timebucket_sampler(self, bucket_size=86400, w_cold=False):
+        # index events/users by fixed-size time buckets so a negative user can be drawn from
+        # users who were active around the same time as the positive event (unused helper, kept
+        # alongside get_pair_user_uniform as an alternative negative-user sampler)
         self.user_bucket_size = float(bucket_size)
 
-	    # active users per bucket from TRAIN events
+        # active users per bucket from TRAIN events
         hot_bucket_to_users = {}
         for (u, v, t) in self.train_hot_events:
             b = int(t // self.user_bucket_size)
@@ -251,19 +268,19 @@ class UserItemTime(Dataset):
                 hot_bucket_to_users[b] = set()
             hot_bucket_to_users[b].add(u)
 
-	    # store as numpy arrays for fast indexing
+        # store as numpy arrays for fast indexing
         self.hot_bucket_to_users_np = {
             b: np.array(sorted(list(users)), dtype=np.int64)
             for b, users in hot_bucket_to_users.items()
         }
 
-	    # bucket id for each train event
+        # bucket id for each train event
         self.train_hot_event_bucket = np.array(
-		    [int(t // self.user_bucket_size) for t in self.hot_event_time_list],
-		    dtype=np.int64
-	    )
+            [int(t // self.user_bucket_size) for t in self.hot_event_time_list],
+            dtype=np.int64
+        )
 
-	    # event indices grouped by bucket
+        # event indices grouped by bucket
         self.hot_bucket_to_event_idx = {}
         for idx, b in enumerate(self.train_hot_event_bucket):
             if b not in self.hot_bucket_to_event_idx:
@@ -274,7 +291,7 @@ class UserItemTime(Dataset):
             for b, idxs in self.hot_bucket_to_event_idx.items()
         }
 
-	    # global users for fallback
+        # global users for fallback
         self.hot_all_users_np = np.arange(self.n_user, dtype=np.int64)
 
         if w_cold:
@@ -311,8 +328,10 @@ class UserItemTime(Dataset):
             # global users for fallback
             self.cold_all_users_np = np.arange(self.n_user, dtype=np.int64)
 
-        
+
     def get_pair_user_event_timebucket_fast(self, k=1, w_cold=False):
+        # vectorized rejection sampling: draw negative users from the same time bucket as
+        # the positive event, falling back to global uniform sampling for sparsely-active buckets
         hot_pos_user = self.hot_user_list  # [N]
         N = len(hot_pos_user)
 
@@ -344,7 +363,7 @@ class UserItemTime(Dataset):
         self.hot_neg_user_list = hot_neg_user.astype(np.int64)
 
         if w_cold:
-            cold_pos_user = self.cold_user_list 
+            cold_pos_user = self.cold_user_list
             M = len(cold_pos_user)
 
             cold_neg_user = np.empty((M, k), dtype=np.int64)

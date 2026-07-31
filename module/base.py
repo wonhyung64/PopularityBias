@@ -4,6 +4,8 @@ import torch.nn.functional as F
 
 
 class ResidualBase(nn.Module):
+    # Shared backbone: user/item embeddings + the cosine-similarity density-ratio score s(x_u(t), v).
+    # Subclasses only need to implement encode_user() to get a full recommender.
     def __init__(self, num_users, num_items, embedding_k, device, tau=1.0, depth=1, max_seq_len=50, n_heads=2, dropout=0.1, norm_first = True):
         super().__init__()
         self.num_users = num_users
@@ -18,6 +20,7 @@ class ResidualBase(nn.Module):
         self.padding_item_id = self.num_items
         self.norm_first = norm_first
 
+        # extra padding row at index num_items so history sequences can be padded with a real embedding id
         self.item_embedding = nn.Embedding(self.num_items + 1, self.embedding_k, padding_idx=self.padding_item_id)
         self.user_embedding = nn.Embedding(self.num_users, self.embedding_k)
 
@@ -28,6 +31,7 @@ class ResidualBase(nn.Module):
         return self.item_embedding(item_idx)
 
     def residual_score(self, item_idx, hist_item_idx, additional_feat):
+        # cosine similarity between the user context and a small set of candidate items (pos + sampled negs)
         u = self.encode_user(hist_item_idx, additional_feat)
         mini_batch, recdim = u.shape
         v = self.get_item_repr(item_idx).reshape(mini_batch, -1, recdim)
@@ -37,6 +41,7 @@ class ResidualBase(nn.Module):
         return h
 
     def score_all_items(self, hist_item_idx, additional_feat):
+        # same score but against the full item catalog, used at inference for ranking
         u = self.encode_user(hist_item_idx, additional_feat)
         v_all = self.get_item_repr(torch.arange(self.num_items, device=hist_item_idx.device))
         u = F.normalize(u, dim=-1, eps=1e-8)
@@ -46,6 +51,7 @@ class ResidualBase(nn.Module):
 
 
 class PositionalEncoding(torch.nn.Module):
+    # learned positional embedding that zeroes out padded history positions
     def __init__(self, max_len, d_model, padding_item_id):
         super().__init__()
         self.padding_item_id = padding_item_id

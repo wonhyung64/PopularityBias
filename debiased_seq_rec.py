@@ -1,4 +1,7 @@
 #%%
+# Proposed framework applied to sequential backbones (see debiased_cf.py for the non-sequential
+# version). Same joint Hawkes-popularity + density-ratio training loop from Algorithm 1, but
+# encode_user takes the interaction history instead of a static user id.
 import os
 import torch
 import numpy as np
@@ -51,6 +54,7 @@ if model_name not in MODEL_REGISTRY:
 model_class = MODEL_REGISTRY[model_name]
 debiased_class = build_debias_model(model_class)
 
+# BSARec needs its extra frequency-filter hyperparameters (c, alpha)
 if args.model_name == "bsarec":
     model = debiased_class(
         num_users=dataset.n_user,
@@ -123,6 +127,7 @@ while epoch < args.epochs:
 
 
         """USER"""
+        # density-ratio loss: sequential backbones only train on hot events (real history)
         hot_anchor_user = torch.tensor(dataset.hot_user_list[hot_sample_idx], dtype=torch.long, device=args.device)
         hot_pos_item = torch.tensor(dataset.hot_pos_item_list[hot_sample_idx], dtype=torch.long, device=args.device)
         anchor_hist_items = torch.tensor(dataset.train_hist_item_list[hot_sample_idx], dtype=torch.long, device=args.device)
@@ -135,6 +140,7 @@ while epoch < args.epochs:
 
 
         """ITEM"""
+        # popularity loss ell_pop still pools hot + cold events, since it only needs item-event times
         cold_sample_idx = cold_idxs[cold_mini_batch*idx : (idx + 1)*cold_mini_batch]
         cold_pos_item = torch.tensor(dataset.cold_pos_item_list[cold_sample_idx], dtype=torch.long, device=args.device)
         pos_item = torch.cat([cold_pos_item, hot_pos_item], dim=0)

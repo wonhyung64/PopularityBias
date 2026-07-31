@@ -1,4 +1,6 @@
 #%%
+# Same uniform-negative baseline as cf.py, but for sequential backbones (GRU/SASRec/FEARec/BSARec)
+# that encode user context from interaction history rather than a static user embedding.
 import os
 import torch
 import numpy as np
@@ -35,6 +37,8 @@ epoch = 0
 
 
 #%%
+# BSARec needs the extra frequency-filter hyperparameters (c, alpha); other backbones go
+# through the generic build_model factory
 if args.model_name == "bsarec":
     model = BSARec(
         num_users=dataset.n_user,
@@ -68,8 +72,8 @@ if len(matched_files) > 0:
 #%%
 dataset.get_pair_item_uniform(k=args.contrast_size-1, w_time=True)
 
-while epoch < args.epochs: 
-    epoch += 1 
+while epoch < args.epochs:
+    epoch += 1
     torch.cuda.empty_cache()
     model.train()
     np.random.shuffle(hot_idxs)
@@ -77,6 +81,7 @@ while epoch < args.epochs:
 
 
     for idx in range(batch_num):
+        # sequential backbones only train on hot events, since encode_user needs real history
         hot_sample_idx = hot_idxs[hot_mini_batch*idx : (idx + 1)*hot_mini_batch]
         pos_item = torch.tensor(dataset.hot_pos_item_list[hot_sample_idx], dtype=torch.long, device=args.device)
         neg_item = torch.tensor(dataset.hot_neg_item_list[hot_sample_idx], dtype=torch.long, device=args.device)

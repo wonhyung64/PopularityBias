@@ -1,4 +1,7 @@
 #%%
+# Backbone-only baseline trainer: standard logistic contrastive learning (BPR-style) with
+# uniform negative sampling. No Hawkes popularity model involved -- this is what Corollary 1
+# in the paper describes as retaining the item popularity term in the learned score.
 import os
 import torch
 import numpy as np
@@ -24,6 +27,7 @@ dataset = UserItemTime(args.data_path, args.dataset, args.time_unit, 50, args.ma
 
 mini_batch = args.batch_size // args.contrast_size
 batch_num = dataset.trainDataSize // mini_batch + 1
+# each mini-batch mixes hot (has history) and cold (no history) events in proportion to the full data
 hot_ratio = dataset.hotDataSize / dataset.trainDataSize
 hot_mini_batch = round(mini_batch * hot_ratio)
 hot_idxs = np.arange(dataset.hotDataSize)
@@ -37,6 +41,7 @@ epoch = 0
 model = build_model(args, dataset, mini_batch)
 optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.decay)
 
+# resume from the latest checkpoint for this backbone/seed if one exists
 save_dir = Path(args.save_path)
 pattern = f"backbone_{args.model_name}_e???_seed{args.seed}.pt"
 matched_files = sorted(save_dir.glob(pattern))
@@ -52,8 +57,8 @@ if len(matched_files) > 0:
 #%%
 dataset.get_pair_item_uniform(k=args.contrast_size-1, w_time=True)
 
-while epoch < args.epochs: 
-    epoch += 1 
+while epoch < args.epochs:
+    epoch += 1
     torch.cuda.empty_cache()
     model.train()
     np.random.shuffle(hot_idxs)
@@ -87,6 +92,7 @@ while epoch < args.epochs:
         neg_score = torch.sum(u.unsqueeze(1) * v, dim=-1)
 
 
+        # logistic contrastive loss: -log sigmoid(pos) - sum log sigmoid(-neg)
         user_loss = -(F.logsigmoid(pos_score) + F.logsigmoid(-neg_score).sum(-1, keepdim=True)).sum()
         epoch_user_loss += user_loss.item()
         optimizer.zero_grad()
@@ -125,6 +131,7 @@ while epoch < args.epochs:
                 v_all = model.get_item_repr(torch.arange(model.num_items, device=hist_item_t.device))
                 pred = torch.matmul(u, v_all.T).squeeze(0).cpu()
 
+            # full-ranking evaluation: score every item except ones already seen by the user
             exclude_items = list(dataset._allPos[user])
             pred[exclude_items] = -9999
             _, pred_k = torch.topk(pred, k=max(args.topks))

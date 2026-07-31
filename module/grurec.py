@@ -13,6 +13,7 @@ class GRURec(ResidualBase):
         )
 
     def encode_user(self, hist_item_idx, user_idx=None):
+        # user context = final hidden state of the GRU over the item-embedding history
         hist_emb = self.item_embedding(hist_item_idx)
         _, h_n = self.user_gru(hist_emb)
         u = h_n[-1]

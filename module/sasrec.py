@@ -21,6 +21,7 @@ class PointWiseFeedForward(torch.nn.Module):
 
 
 class SASRec(ResidualBase):
+    # standard self-attentive sequential recommender (Kang & McAuley, 2018)
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pos_enc = PositionalEncoding(self.max_seq_len, self.embedding_k, self.padding_item_id)
@@ -65,6 +66,7 @@ class SASRec(ResidualBase):
                 seqs = torch.transpose(seqs, 0, 1)
                 seqs = self.forward_layernorms[i](seqs + self.forward_layers[i](seqs))
 
+        # user context = final-position hidden state after the last attention block
         u = self.last_layernorm(seqs)[:,-1,:]
 
         return u

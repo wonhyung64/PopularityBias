@@ -20,3 +20,4 @@ bin-release/
 /weights/
 __pycache__
 .DS_Store
+.claude

@@ -3,18 +3,22 @@ import torch.nn as nn
 
 
 def build_debias_model(model_class):
+    # wraps any backbone with the Hawkes popularity model used for negative sampling and inference calibration
     class HawkesDebias(model_class):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.softplus = nn.Softplus()
+            # base_net -> mu(z), excitation_net -> alpha(z), both mapped from item embedding z
             self.base_net = self._build_mlp(self.embedding_k, self.embedding_k//2, self.depth)
             self.excitation_net = self._build_mlp(self.embedding_k, self.embedding_k//2, self.depth)
             self.log_beta = nn.Parameter(torch.zeros(()))
+            # separate item embedding for the popularity model, decoupled from the recommender's item_embedding
             self.p_item_embedding = nn.Embedding(self.num_items, self.embedding_k)
             self.reset_parameters()
 
         @staticmethod
         def _build_mlp(input_dim, hidden_dim, depth):
+            # small MLP with softplus output so mu/alpha stay positive
             layers = []
             in_dim = input_dim
             for _ in range(max(depth, 1)):
@@ -33,9 +37,11 @@ def build_debias_model(model_class):
                         nn.init.zeros_(module.bias)
 
         def current_beta(self):
+            # decay rate beta, kept positive via softplus
             return self.softplus(self.log_beta) + 1e-6
 
         def prior_parameters_from_embeddings(self):
+            # mu, alpha, beta for every item, used to build the negative-sampling snapshot
             z = self.p_item_embedding.weight
             mu = self.softplus(self.base_net(z)).squeeze(-1) + 1e-8
             alpha = self.softplus(self.excitation_net(z)).squeeze(-1) + 1e-8
@@ -43,13 +49,14 @@ def build_debias_model(model_class):
             return mu, alpha, beta
 
         def prior(self, batch_items, pos_time, batch_time_all):
+            # Hawkes intensity lambda_v(t) = mu_v + alpha_v * sum_j exp(-beta * (t - t_j)) over past events t_j < t
             item_vec = self.p_item_embedding(batch_items)
             beta = self.current_beta()
             query = pos_time.view(-1, 1, 1)
             mask = batch_time_all < query
             delta = (query - batch_time_all).clamp(min=0.0)
             h = (torch.exp(-beta * delta) * mask).sum(dim=-1)
-            mB, C = h.shape 
+            mB, C = h.shape
             mu = self.softplus(self.base_net(item_vec)).reshape(mB, C) + 1e-8
             alpha = self.softplus(self.excitation_net(item_vec)).reshape(mB, C) + 1e-8
             return mu + alpha * h

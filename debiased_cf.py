@@ -1,4 +1,8 @@
 #%%
+# Proposed framework: jointly trains the Hawkes popularity model and the density-ratio
+# recommender (MF/GRU-style backbones), following Algorithm 1 in the paper. Negatives for the
+# user loss are drawn from the current Hawkes snapshot instead of uniformly, and the popularity
+# model is fit on uniformly-sampled negatives via the sampled-softmax objective ell_pop.
 import os
 import torch
 import numpy as np
@@ -24,6 +28,7 @@ os.makedirs(args.save_path, exist_ok=True)
 #%%
 dataset = UserItemTime(args.data_path, args.dataset, args.time_unit, 50, args.max_seq_len)
 
+# item_time_array is stored in raw timestamp units; rescale it to match args.time_unit
 if args.time_unit == "s":
     pass
 elif args.time_unit == "m":
@@ -49,6 +54,7 @@ model_name = getattr(args, "model_name", "mf").lower()
 if model_name not in MODEL_REGISTRY:
     raise ValueError(f"Unknown model_name={model_name}. Available: {list(MODEL_REGISTRY.keys())}")
 model_class = MODEL_REGISTRY[model_name]
+# wrap the chosen backbone with the Hawkes popularity head (mu/alpha/beta networks)
 debiased_class = build_debias_model(model_class)
 model = debiased_class(
     num_users=dataset.n_user,
@@ -81,6 +87,7 @@ if len(matched_files) > 0:
 
 
 #%%
+# initial Hawkes snapshot and popularity-aware negatives for the density-ratio loss
 dataset.get_pair_item_uniform(k=args.contrast_size-1, w_time=True)
 snapshot = make_prior_snapshot(model)
 hot_negs = sample_epoch_negatives(
@@ -111,6 +118,7 @@ while epoch < args.epochs:
         cold_sample_idx = cold_idxs[cold_mini_batch*idx : (idx + 1)*cold_mini_batch]
 
         """USER"""
+        # density-ratio loss with popularity-aware negatives (Eq. 5), weighted by gamma
         hot_anchor_user = torch.tensor(dataset.hot_user_list[hot_sample_idx], dtype=torch.long, device=args.device)
         hot_pos_item = torch.tensor(dataset.hot_pos_item_list[hot_sample_idx], dtype=torch.long, device=args.device)
 
@@ -132,6 +140,8 @@ while epoch < args.epochs:
 
 
         """ITEM"""
+        # sampled-softmax popularity loss ell_pop (Eq. under Estimating Time-Varying Item
+        # Popularity): uses fresh uniform negatives, independent of the density-ratio negatives
         hot_neg_item = torch.tensor(dataset.hot_neg_item_list[hot_sample_idx], dtype=torch.long, device=args.device)
         cold_neg_item = torch.tensor(dataset.cold_neg_item_list[cold_sample_idx], dtype=torch.long, device=args.device)
         neg_item = torch.cat([cold_neg_item, hot_neg_item], dim=0)
@@ -151,6 +161,7 @@ while epoch < args.epochs:
         batch_items = torch.concat([pos_item.unsqueeze(-1), neg_item], -1).reshape(pos_item.shape[0], -1)
         batch_time_all = torch.concat([pos_time_all.unsqueeze(1), neg_time_all], 1)
 
+        # lambda_v(t) for the positive item followed by its negatives; index 0 is always the positive
         logits = model.prior(batch_items, pos_time, batch_time_all)
         log_logits = torch.log(logits + 1e-9)
         item_loss = -nn.functional.log_softmax(log_logits, dim=-1)[:, 0].mean() * (1-args.gamma)
@@ -159,6 +170,7 @@ while epoch < args.epochs:
         dataset.get_pair_item_uniform(k=args.contrast_size-1, w_time=True)
 
 
+        # combined objective L = gamma * ell_DR + (1 - gamma) * ell_pop
         total_loss = item_loss + user_loss
         optimizer.zero_grad()
         total_loss.backward()
@@ -178,6 +190,7 @@ while epoch < args.epochs:
 
 
     if epoch % args.pair_reset_interval == 0:
+        # refresh the Hawkes snapshot and resample popularity-aware negatives (snapshot reset in Algorithm 1)
         print("Reset Negs")
         snapshot = make_prior_snapshot(model)
         hot_negs = sample_epoch_negatives(
@@ -208,6 +221,7 @@ while epoch < args.epochs:
             with torch.no_grad():
                 resid = score_all(model, hist_item_t, user_t).squeeze(0)
 
+            # per-item Hawkes log-intensity at the query time, normalized into a log-probability
             pos_time_t = torch.tensor([pos_time_val], dtype=torch.float32).to(args.device)
             item_logits_list = []
             for idx2 in range(dataset.m_item // args.batch_size + 1):
@@ -224,6 +238,7 @@ while epoch < args.epochs:
 
             item_logits = torch.concat(item_logits_list)
             item_log_prob = torch.log(item_logits + 1e-12) - torch.log(item_logits.sum() + 1e-12)
+            # ranking score r_eta = eta * log popularity + (1 - eta) * debiased score (inference calibration)
             pred = (item_log_prob * args.eta + resid * (1-args.eta)).cpu()
 
             exclude_items = list(dataset._allPos[user])
@@ -286,6 +301,7 @@ print(dict(zip([f"test_mrr_{k}_{epoch}" for k in args.topks], test_results[3])))
 
 
 if args.debiased_eval == "true":
+    # additional breakdown by head/tail items under different popularity-window definitions (Fig. 3)
     eval_datasets = [
         ("head_overall", dataset.test_head_overall_dict),
         ("head_recent_3d", dataset.test_head_recent_3d_dict),

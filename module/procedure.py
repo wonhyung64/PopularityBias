@@ -29,7 +29,7 @@ def evaluate(args, flag, dataset, model, item_pop):
 
 	true_list, pred_list = [], []
 	for u in range(dataset.n_users):
-		"""True Rating"""
+		# ground-truth items for this user
 		if len(testDict[u]) == 0:
 			continue
 		true_list.append(testDict[u])
@@ -44,8 +44,7 @@ def evaluate(args, flag, dataset, model, item_pop):
 
 		pred = (log_p_utv + log_p_tv_all + log_p_v_all).squeeze(-1)
 
-
-		"""Filtering item history indices"""
+		# mask out items already seen by the user
 		exclude_items = list(dataset._allPos[u])
 		if flag == "test":
 			valid_items = dataset.getUserValidItems(torch.tensor([u])) # exclude validation items
@@ -53,7 +52,7 @@ def evaluate(args, flag, dataset, model, item_pop):
 		pred[exclude_items] = -(9999)
 		_, pred_k = torch.topk(pred.squeeze(-1), k=max(args.topks))
 		pred_list.append(pred_k.cpu())
-	
+
 	return true_list, pred_list
 
 
@@ -61,11 +60,12 @@ def minibatch(num, batch_size):
 	for i in range(0, num, batch_size):
 		yield i
 
-        
+
 def computeTopNAccuracy(GroundTruth, predictedIndices, topN):
-    precision = [] 
-    recall = [] 
-    NDCG = [] 
+    # standard Precision/Recall/NDCG/MRR@k averaged over users with nonempty ground truth
+    precision = []
+    recall = []
+    NDCG = []
     MRR = []
 
     for index in range(len(topN)):
@@ -86,22 +86,22 @@ def computeTopNAccuracy(GroundTruth, predictedIndices, topN):
                 hit = []
                 for j in range(topN[index]):
                     if predictedIndices[i][j] in GroundTruth[i]:
-                        # if Hit!
+                        # hit at rank j
                         dcg += 1.0/math.log2(j + 2)
                         if mrrFlag:
                             userMRR = (1.0/(j+1.0))
                             mrrFlag = False
                         userHit += 1
-                
+
                     if idcgCount > 0:
                         idcg += 1.0/math.log2(j + 2)
                         idcgCount = idcgCount-1
-                            
+
                 if(idcg != 0):
                     ndcg += (dcg/idcg)
-                    
+
                 sumForPrecision += userHit / topN[index]
-                sumForRecall += userHit / len(GroundTruth[i])               
+                sumForRecall += userHit / len(GroundTruth[i])
                 sumForNdcg += ndcg
                 sumForMRR += userMRR
                 cnt += 1
@@ -110,5 +110,5 @@ def computeTopNAccuracy(GroundTruth, predictedIndices, topN):
         recall.append(round(sumForRecall / cnt, 4))
         NDCG.append(round(sumForNdcg / cnt, 4))
         MRR.append(round(sumForMRR / cnt, 4))
-        
+
     return precision, recall, NDCG, MRR

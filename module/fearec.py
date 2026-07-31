@@ -6,6 +6,8 @@ from module.base import ResidualBase, PositionalEncoding
 
 
 class FEARec(ResidualBase):
+    # frequency-enhanced attention backbone (Du et al., 2023): mixes autocorrelation-based
+    # time-domain attention with a frequency-domain (spectral) attention branch
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pos_enc = PositionalEncoding(self.max_seq_len, self.embedding_k, self.padding_item_id)
@@ -44,6 +46,8 @@ class FEABlock(nn.Module):
 
 
 class HybridAttention(nn.Module):
+    # combines autocorrelation attention (time domain) with a band-limited spectral attention
+    # (frequency domain); each layer i attends to a different frequency band, set up below
     def __init__(self, n_heads, hidden_size, i, dropout, n_layers, max_seq_len):
         super(HybridAttention, self).__init__()
         if hidden_size % n_heads != 0:
@@ -72,6 +76,7 @@ class HybridAttention(nn.Module):
         self.LayerNorm = nn.LayerNorm(hidden_size, eps=1e-8)
         self.out_dropout = nn.Dropout(dropout)
 
+        # decide whether frequency bands are split globally (G) or locally per layer (L)
         if self.global_ratio > (1 / self.n_layers):
             print("{}>{}:{}".format(self.global_ratio, 1 / self.n_layers, self.global_ratio > (1 / self.n_layers)))
             self.filter_mixer = 'G'
@@ -91,6 +96,7 @@ class HybridAttention(nn.Module):
             self.w = self.local_ratio
             self.s = self.filter_size
 
+        # frequency band assigned to this layer, sliding across layers by self.s
         self.left = int(((self.max_item_list_length // 2 + 1) * (1 - self.w)) - (i * self.s))
         self.right = int((self.max_item_list_length // 2 + 1) - i * self.s)
 
@@ -126,14 +132,14 @@ class HybridAttention(nn.Module):
         head = values.shape[1]
         channel = values.shape[2]
         length = values.shape[3]
-        # find top k
+        # find top k correlation lags
         top_k = int(self.factor * math.log(length))
         mean_value = torch.mean(torch.mean(corr, dim=1), dim=1)
         index = torch.topk(torch.mean(mean_value, dim=0), top_k, dim=-1)[1]
         weights = torch.stack([mean_value[:, index[i]] for i in range(top_k)], dim=-1)
-        # update corr
+        # softmax over top-k correlations
         tmp_corr = torch.softmax(weights, dim=-1)
-        # aggregation
+        # aggregate the rolled (shifted) sequences weighted by their correlation
         tmp_values = values
         delays_agg = torch.zeros_like(values).float()
         for i in range(top_k):
@@ -151,16 +157,16 @@ class HybridAttention(nn.Module):
         head = values.shape[1]
         channel = values.shape[2]
         length = values.shape[3]
-        # index init
+        # per-sample lag indices instead of a shared top-k, since inference has no batch-level averaging
         init_index = torch.arange(length).unsqueeze(0).unsqueeze(0).unsqueeze(0) \
             .repeat(batch, head, channel, 1).to(values.device)
-        # find top k
+        # find top k correlation lags
         top_k = int(self.factor * math.log(length))
         mean_value = torch.mean(torch.mean(corr, dim=1), dim=1)
         weights, delay = torch.topk(mean_value, top_k, dim=-1)
-        # update corr
+        # softmax over top-k correlations
         tmp_corr = torch.softmax(weights, dim=-1)
-        # aggregation
+        # gather values at each lag and aggregate weighted by correlation
         tmp_values = values.repeat(1, 1, 1, 2)
         delays_agg = torch.zeros_like(values).float()
         for i in range(top_k):
@@ -178,7 +184,7 @@ class HybridAttention(nn.Module):
         queries = self.transpose_for_scores(mixed_query_layer)
         keys = self.transpose_for_scores(mixed_key_layer)
         values = self.transpose_for_scores(mixed_value_layer)
-        
+
         B, L, H, E = queries.shape
         _, S, _, D = values.shape
         if L > S:
@@ -189,7 +195,7 @@ class HybridAttention(nn.Module):
             values = values[:, :L, :, :]
             keys = keys[:, :L, :, :]
 
-        # period-based dependencies
+        # period-based dependencies via FFT cross-correlation of Q and K
         q_fft = torch.fft.rfft(queries.permute(0, 2, 3, 1).contiguous(), dim=-1)
         k_fft = torch.fft.rfft(keys.permute(0, 2, 3, 1).contiguous(), dim=-1)
 
@@ -208,7 +214,7 @@ class HybridAttention(nn.Module):
 
         corr = torch.fft.irfft(box_res, dim=-1)
 
-        # time delay agg
+        # time-domain autocorrelation attention (delay aggregation)
         if self.training:
             V = self.time_delay_agg_training(values.permute(0, 2, 3, 1).contiguous(), corr).permute(0, 3, 1, 2)
         else:
@@ -242,6 +248,7 @@ class HybridAttention(nn.Module):
         for i, j in enumerate(self.time_v_index):
             spatial_v[:, :, :, j] = v_fft_box[:, :, :, i]
 
+        # project the band-limited spectral Q/K/V back to the time domain for the spatial attention branch
         queries = torch.fft.irfft(spatial_q, dim=-1)
         keys = torch.fft.irfft(spatial_k, dim=-1)
         values = torch.fft.irfft(spatial_v, dim=-1)
@@ -253,13 +260,13 @@ class HybridAttention(nn.Module):
         attention_scores = torch.matmul(queries, keys.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
 
-        # attention_scores = attention_scores + attention_mask
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
         attention_probs = self.dropout(attention_probs)
-        qkv = torch.matmul(attention_probs, values)  # [256, 2, index, 32]
+        qkv = torch.matmul(attention_probs, values)
         context_layer_spatial = qkv.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer_spatial.size()[:-2] + (self.all_head_size,)
         context_layer_spatial = context_layer_spatial.view(*new_context_layer_shape)
+        # blend time-domain autocorrelation output with the spectral attention output
         context_layer = (1 - self.spatial_ratio) * context_layer + self.spatial_ratio * context_layer_spatial
 
         hidden_states = self.dense(context_layer)

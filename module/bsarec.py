@@ -5,6 +5,8 @@ from module.base import ResidualBase, PositionalEncoding
 
 
 class BSARec(ResidualBase):
+    # attentive inductive bias backbone (Shin et al., 2023): mixes attention with a
+    # frequency-domain low/high-pass filter, controlled by alpha
     def __init__(self, *args, c=3, alpha=0.5, **kwargs):
         super().__init__(*args, **kwargs)
         self.pos_enc = PositionalEncoding(self.max_seq_len, self.embedding_k, self.padding_item_id)
@@ -47,14 +49,16 @@ class BSARecLayer(nn.Module):
         self.alpha = alpha
 
     def forward(self, input_tensor):
+        # combine the frequency filter (dsp) with global self-attention (gsp)
         dsp = self.filter_layer(input_tensor)
         gsp, _ = self.attention_layer(input_tensor, input_tensor, input_tensor)
         hidden_states = self.alpha * dsp + ( 1 - self.alpha ) * gsp
 
         return hidden_states
-    
+
 
 class FrequencyLayer(nn.Module):
+    # splits the sequence into low/high frequency components via FFT and reweights the high-pass part
     def __init__(self, dropout_rate, embedding_k, c):
         super(FrequencyLayer, self).__init__()
         self.out_dropout = nn.Dropout(dropout_rate)
@@ -67,6 +71,7 @@ class FrequencyLayer(nn.Module):
         _, seq_len, __ = input_tensor.shape
         x = torch.fft.rfft(input_tensor, dim=1, norm='ortho')
 
+        # keep only the first c frequency components as the low-pass signal
         low_pass = x[:]
         low_pass[:, self.c:, :] = 0
         low_pass = torch.fft.irfft(low_pass, n=seq_len, dim=1, norm='ortho')

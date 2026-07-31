@@ -1,4 +1,6 @@
 #%%
+# Same uniform-negative baseline as seq_rec.py, specialized for TiSASRec since it takes
+# discretized history timestamps instead of a plain user id.
 import os
 import torch
 import numpy as np
@@ -62,8 +64,8 @@ if len(matched_files) > 0:
 #%%
 dataset.get_pair_item_uniform(k=args.contrast_size-1, w_time=True)
 
-while epoch < args.epochs: 
-    epoch += 1 
+while epoch < args.epochs:
+    epoch += 1
     torch.cuda.empty_cache()
     model.train()
     np.random.shuffle(hot_idxs)
@@ -76,6 +78,7 @@ while epoch < args.epochs:
         neg_item = torch.tensor(dataset.hot_neg_item_list[hot_sample_idx], dtype=torch.long, device=args.device)
         anchor_user = torch.tensor(dataset.hot_user_list[hot_sample_idx], dtype=torch.long, device=args.device)
         anchor_hist_items = torch.tensor(dataset.train_hist_item_list[hot_sample_idx], dtype=torch.long, device=args.device)
+        # history times are stored in days; TiSASRec's relative-interval embedding expects seconds
         anchor_hist_times = torch.tensor(dataset.train_hist_time_list[hot_sample_idx] * 24 * 60 * 60, dtype=torch.long, device=args.device)
 
 
