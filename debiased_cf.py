@@ -1,6 +1,6 @@
 #%%
 # Proposed framework: jointly trains the Hawkes popularity model and the density-ratio
-# recommender (MF/GRU-style backbones), following Algorithm 1 in the paper. Negatives for the
+# recommender (MF), following Algorithm 1 in the paper. Negatives for the
 # user loss are drawn from the current Hawkes snapshot instead of uniformly, and the popularity
 # model is fit on uniformly-sampled negatives via the sampled-softmax objective ell_pop.
 import os

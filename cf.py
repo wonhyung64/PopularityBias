@@ -1,5 +1,5 @@
 #%%
-# Backbone-only baseline trainer: standard logistic contrastive learning (BPR-style) with
+# Backbone-only baseline trainer: standard logistic contrastive learning (BCE-style) with
 # uniform negative sampling. No Hawkes popularity model involved -- this is what Corollary 1
 # in the paper describes as retaining the item popularity term in the learned score.
 import os
