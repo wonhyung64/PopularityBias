@@ -92,7 +92,7 @@ optimizer = torch.optim.Adam(
 )
 
 save_dir = Path(args.save_path)
-pattern = f"proposed_{args.model_name}_lambda{args.lambda1}_e???_seed{args.seed}.pt"
+pattern = f"proposed_{args.model_name}_gamma{args.gamma}_e???_seed{args.seed}.pt"
 matched_files = sorted(save_dir.glob(pattern))
 if len(matched_files) > 0:
     recent_file = max(matched_files, key=get_epoch)
@@ -150,7 +150,7 @@ while epoch < args.epochs:
 
         pos_score = score_pair(model, pos_item, anchor_hist_items, anchor_user)
         neg_score = score_pair(model, neg_item, anchor_hist_items, anchor_user)
-        user_loss += -(F.logsigmoid(pos_score) + F.logsigmoid(-neg_score).sum(-1, keepdim=True)).mean() * args.lambda1
+        user_loss += -(F.logsigmoid(pos_score) + F.logsigmoid(-neg_score).sum(-1, keepdim=True)).mean() * args.gamma
         epoch_user_loss += user_loss.item()
 
 
@@ -176,7 +176,7 @@ while epoch < args.epochs:
 
         logits = model.prior(batch_items, pos_time, batch_time_all)
         log_logits = torch.log(logits + 1e-9)
-        item_loss = -nn.functional.log_softmax(log_logits, dim=-1)[:, 0].mean() * (1-args.lambda1)
+        item_loss = -nn.functional.log_softmax(log_logits, dim=-1)[:, 0].mean() * (1-args.gamma)
         epoch_item_loss += item_loss.item()
 
         dataset.get_pair_item_uniform(k=args.contrast_size-1, w_time=True)
@@ -197,7 +197,7 @@ while epoch < args.epochs:
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": epoch_user_loss,
-        }, f"{args.save_path}/proposed_{args.model_name}_lambda{args.lambda1}_e{epoch}_seed{args.seed}.pt")
+        }, f"{args.save_path}/proposed_{args.model_name}_gamma{args.gamma}_e{epoch}_seed{args.seed}.pt")
 
 
     if epoch % args.pair_reset_interval == 0:

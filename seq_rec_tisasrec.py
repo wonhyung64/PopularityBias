@@ -73,7 +73,7 @@ model = TiSASRec(
             max_seq_len=args.max_seq_len,
             n_heads=args.n_heads,
             dropout=args.dropout,
-            time_span=time_span
+            time_span=args.time_span
         ).to(args.device)
 optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.decay)
 
