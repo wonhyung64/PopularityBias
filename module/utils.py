@@ -7,38 +7,41 @@ import numpy as np
 
 def parse_args():
     parser = argparse.ArgumentParser(description="")
-    parser.add_argument('--batch-size', type=int,default=32384)
-    parser.add_argument('--recdim', type=int,default=128,)
-    parser.add_argument('--lr', type=float,default=0.001,)
-    parser.add_argument('--decay', type=float,default=0.,)
-    parser.add_argument('--gamma', type=float,default=0.5,)
     parser.add_argument('--data-path', type=str, default='./data',
                         help='the path to dataset')
     parser.add_argument('--cred-path', type=str, default='./assets',
                         help='the path to credential')
     parser.add_argument('--weights-path', type=str, default='./weights',
                         help='the path to credential')
+    parser.add_argument('--device', type=str, default='none')
+    parser.add_argument('--topks', type=list, default=[10, 20, 50, 100])
+    parser.add_argument('--debiased-eval', type=str, default="true")
+    parser.add_argument('--evaluate-interval', type=int, default=500)
+
+    parser.add_argument('--seed', type=int, default=0, help='random seed')
     parser.add_argument('--dataset', type=str,default='micro_video',
                         help="available datasets: ['micro_video', 'kuairand', 'ml-1m']")
-    parser.add_argument('--topks', type=list, default=[10, 20, 50, 100])
-    parser.add_argument('--epochs', type=int,default=500)
-    parser.add_argument('--seed', type=int, default=0, help='random seed')
-    parser.add_argument('--contrast-size', type=int, default=16)
-    parser.add_argument('--evaluate-interval', type=int, default=500)
-    parser.add_argument('--device', type=str, default='none')
-    parser.add_argument('--tau', type=float, default=0.5)
-    parser.add_argument('--alpha', type=float, default=0.5)
-    parser.add_argument('--c', type=int, default=3)
-    parser.add_argument('--depth', type=int, default=0)
+    parser.add_argument('--time-unit', type=str, default="d")
     parser.add_argument('--pair-reset-interval', type=int, default=5)
+    parser.add_argument('--model-name', type=str, default="mf")
+    parser.add_argument('--batch-size', type=int,default=32384)
+    parser.add_argument('--recdim', type=int,default=128,)
+    parser.add_argument('--lr', type=float,default=0.001,)
+    parser.add_argument('--decay', type=float,default=0.,)
+    parser.add_argument('--epochs', type=int,default=500)
+    parser.add_argument('--contrast-size', type=int, default=16)
+    parser.add_argument('--depth', type=int, default=0)
     parser.add_argument('--max-seq-len', type=int, default=50)
     parser.add_argument('--dropout', type=float, default=0.2)
     parser.add_argument('--n-heads', type=int, default=1)
-    parser.add_argument('--model-name', type=str, default="mf")
-    parser.add_argument('--eta', type=float, default=0.5)
-    parser.add_argument('--debiased-eval', type=str, default="true")
-    parser.add_argument('--time-unit', type=str, default="d")
     parser.add_argument('--time-span', type=int, default=512)
+    parser.add_argument('--alpha', type=float, default=0.5)
+    parser.add_argument('--c', type=int, default=3)
+
+    parser.add_argument('--tau', type=float, default=0.5)
+    parser.add_argument('--eta', type=float, default=0.5)
+    parser.add_argument('--gamma', type=float,default=0.5,)
+
 
     try:
         return parser.parse_args()
@@ -60,8 +63,6 @@ def set_device(device="none"):
     if device == "none":
         if torch.cuda.is_available():
             device = "cuda"
-        elif torch.backends.mps.is_available():
-            device = "mps"
         else: 
             device = "cpu"
 
