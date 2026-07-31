@@ -20,11 +20,7 @@ os.makedirs(args.save_path, exist_ok=True)
 
 
 #%%
-try:
-    dataset = UserItemTime(args.data_path, args.dataset, args.time_unit, 50, args.max_seq_len)
-except:
-    dataset = UserItemTime("../data", args.dataset, args.time_unit, 50, args.max_seq_len)
-
+dataset = UserItemTime(args.data_path, args.dataset, args.time_unit, 50, args.max_seq_len)
 
 mini_batch = args.batch_size // args.contrast_size
 batch_num = dataset.trainDataSize // mini_batch + 1
